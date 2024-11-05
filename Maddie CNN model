@@ -1,0 +1,124 @@
+import numpy as np
+import tensorflow as tf
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras import layers, models
+from tensorflow.keras.preprocessing import image
+from sklearn.metrics import accuracy_score, f1_score
+import os
+
+# Set parameters
+IMG_HEIGHT = 150  # Adjust based on your dataset
+IMG_WIDTH = 150
+BATCH_SIZE = 15
+
+# Data directories
+BASE_DIR = '/kaggle/input/mydataset/Dataset'
+REAL_DIR = os.path.join(BASE_DIR, 'Real/test/indianMonuments')  # Path to real images
+FAKE_DIR = os.path.join(BASE_DIR, 'Deepfake/test/stylegan')     # Path to fake images
+
+# Use ImageDataGenerator for data augmentation
+train_datagen = ImageDataGenerator(
+    rescale=1.0/255,
+    rotation_range=20,
+    width_shift_range=0.2,
+    height_shift_range=0.2,
+    shear_range=0.2,
+    zoom_range=0.2,
+    horizontal_flip=True,
+    fill_mode='nearest',
+    validation_split=0.2  # Use for validation split
+)
+
+# Create generators for training and validation
+train_generator = train_datagen.flow_from_directory(
+    BASE_DIR,                    # Base directory containing 'Real' and 'Deepfake' folders
+    target_size=(IMG_HEIGHT, IMG_WIDTH),
+    batch_size=BATCH_SIZE,
+    class_mode='binary',
+    subset='training'
+)
+
+validation_generator = train_datagen.flow_from_directory(
+    BASE_DIR,                    # Base directory containing 'Real' and 'Deepfake' folders
+    target_size=(IMG_HEIGHT, IMG_WIDTH),
+    batch_size=BATCH_SIZE,
+    class_mode='binary',
+    subset='validation'
+)
+
+# Build the CNN model
+model = models.Sequential([
+    layers.Conv2D(32, (3, 3), activation='relu', input_shape=(IMG_HEIGHT, IMG_WIDTH, 3)),
+    layers.MaxPooling2D(pool_size=(2, 2)),
+    layers.Conv2D(64, (3, 3), activation='relu'),
+    layers.MaxPooling2D(pool_size=(2, 2)),
+    layers.Conv2D(128, (3, 3), activation='relu'),
+    layers.MaxPooling2D(pool_size=(2, 2)),
+    layers.Flatten(),
+    layers.Dense(128, activation='relu'),
+    layers.Dense(1, activation='sigmoid')  # For binary classification
+])
+
+# Compile the model
+model.compile(optimizer='adam',
+              loss='binary_crossentropy',
+              metrics=['accuracy'])
+
+# Train the model
+history = model.fit(
+    train_generator,
+    steps_per_epoch=train_generator.samples // BATCH_SIZE,
+    validation_data=validation_generator,
+    validation_steps=validation_generator.samples // BATCH_SIZE,
+    epochs=20  # Adjust epochs as needed
+)
+
+# Save the model
+model.save('deepfake_detector.h5')
+
+# Function to predict if an image is real or fake
+def predict_image(image_path):
+    # Load the image
+    img = image.load_img(image_path, target_size=(IMG_HEIGHT, IMG_WIDTH))
+   
+    # Convert the image to a numpy array
+    img_array = image.img_to_array(img)
+   
+    # Reshape the array to fit the model input shape
+    img_array = np.expand_dims(img_array, axis=0)
+   
+    # Rescale the image as done during training
+    img_array /= 255.0
+
+    # Predict the class
+    prediction = model.predict(img_array)
+   
+    # Convert prediction to binary
+    if prediction[0] > 0.5:
+        result = "Real"
+    else:
+        result = "Fake"
+   
+    return result
+
+# Example usage
+image_path = os.path.join('/kaggle/input/testimg/a.jpg')
+result = predict_image(image_path)
+print(f"The image is: {result}")
+
+# Calculate F1 score and accuracy on the validation set
+validation_generator.reset()  # Reset generator to start from the beginning
+
+# Get true labels
+true_labels = validation_generator.classes
+
+# Predict classes on the validation set
+preds = model.predict(validation_generator, steps=validation_generator.samples // BATCH_SIZE + 1)
+pred_labels = (preds > 0.5).astype(int).flatten()  # Convert probabilities to binary predictions
+
+# Calculate accuracy and F1 score
+accuracy = accuracy_score(true_labels, pred_labels)
+f1 = f1_score(true_labels, pred_labels)
+
+print(f"Validation Accuracy: {accuracy * 100:.2f}%")
+print(f"Validation F1 Score: {f1:.2f}")
